@@ -582,7 +582,6 @@ function copyToken() {
             container.innerHTML = html || '<p>Пока нет отправленных решений</p>';
         }
 
-        // Функция для отправки в GitHub
         async function pushToGitHub() {
     const token = document.getElementById('github-token').value;
     const studentName = document.getElementById('student-name').value || 'Anonymous';
@@ -592,15 +591,33 @@ function copyToken() {
         return;
     }
 
-    showStatus('Отправка решений в GitHub...', 'loading');
+    showStatus('Проверка папки solutions...', 'loading');
 
     try {
+        // Проверяем существование папки solutions
+        const checkResponse = await fetch('https://api.github.com/repos/Zemskov6/web_site_flex_grid/contents/solutions', {
+            headers: {
+                'Authorization': `token ${token}`
+            }
+        });
+
+        // Если папки нет (404) - создаем её
+        if (checkResponse.status === 404) {
+            showStatus('Папки solutions нет, создаю...', 'loading');
+            await createSolutionsFolder(token);
+        } else if (!checkResponse.ok) {
+            const error = await checkResponse.json();
+            throw new Error(`Ошибка проверки папки: ${error.message}`);
+        }
+
+        // Теперь загружаем решения
+        showStatus('Отправка решений...', 'loading');
+        
         const solutionsData = JSON.stringify(allSubmissions, null, 2);
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const fileName = `solutions-${studentName}-${timestamp}.json`;
         
-        // Пробуем загрузить в корень репозитория (без папки solutions)
-        const response = await fetch('https://api.github.com/repos/Zemskov6/web_site_flex_grid/contents/' + fileName, {
+        const response = await fetch('https://api.github.com/repos/Zemskov6/web_site_flex_grid/contents/solutions/' + fileName, {
             method: 'PUT',
             headers: {
                 'Authorization': `token ${token}`,
@@ -614,27 +631,65 @@ function copyToken() {
         });
 
         if (response.ok) {
-            showStatus('✅ Решения успешно отправлены в GitHub!', 'success');
-            
-            // Создаем отдельные файлы для каждого задания
+            showStatus('✅ Решения успешно отправлены в папку solutions!', 'success');
             await createIndividualFiles(token, studentName);
-            
         } else {
             const error = await response.json();
-            console.error('GitHub API Error:', error);
-            
-            // Более детальная обработка ошибок
-            if (error.message.includes('exists')) {
-                showStatus('❌ Файл уже существует, пробую другое имя...', 'error');
-                // Можно попробовать с другим именем файла
-                await retryWithDifferentName(token, studentName, solutionsData);
-            } else {
-                showStatus(`❌ Ошибка: ${error.message}`, 'error');
-            }
+            showStatus(`❌ Ошибка: ${error.message}`, 'error');
         }
     } catch (error) {
-        console.error('Network Error:', error);
-        showStatus(`❌ Сетевая ошибка: ${error.message}`, 'error');
+        showStatus(`❌ Ошибка: ${error.message}`, 'error');
+    }
+}
+
+// Функция создания папки solutions
+async function createSolutionsFolder(token) {
+    const response = await fetch('https://api.github.com/repos/Zemskov6/web_site_flex_grid/contents/solutions/README.md', {
+        method: 'PUT',
+        headers: {
+            'Authorization': `token ${token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            message: 'Create solutions directory',
+            content: btoa(unescape(encodeURIComponent('# Solutions\n\nStudent solutions directory'))),
+            branch: 'main'
+        })
+    });
+    
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(`Не удалось создать папку: ${error.message}`);
+    }
+    
+    return true;
+}
+
+// Обновляем функцию создания отдельных файлов
+async function createIndividualFiles(token, studentName) {
+    for (let taskNum = 1; taskNum <= 4; taskNum++) {
+        const submissions = allSubmissions[`task${taskNum}`];
+        if (submissions.length > 0) {
+            const taskData = submissions.map(sub => ({
+                timestamp: sub.timestamp,
+                code: sub.code
+            }));
+            
+            const fileName = `task${taskNum}-${studentName}-${Date.now()}.json`;
+            
+            await fetch('https://api.github.com/repos/Zemskov6/web_site_flex_grid/contents/solutions/' + fileName, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: `Задание ${taskNum} от ${studentName}`,
+                    content: btoa(unescape(encodeURIComponent(JSON.stringify(taskData, null, 2)))),
+                    branch: 'main'
+                })
+            });
+        }
     }
 }
 
